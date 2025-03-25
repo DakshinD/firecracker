@@ -153,9 +153,7 @@ use crate::rate_limiter::BucketUpdate;
 use crate::snapshot::Persist;
 use crate::utils::u64_to_usize;
 use crate::vmm_config::instance_info::{InstanceInfo, VmState};
-use crate::vstate::memory::{
-    GuestMemory, GuestMemoryExtension, GuestMemoryMmap, GuestMemoryRegion,
-};
+use crate::vstate::memory::{GuestMemory, GuestMemoryMmap, GuestMemoryRegion};
 use crate::vstate::vcpu::VcpuState;
 pub use crate::vstate::vcpu::{Vcpu, VcpuConfig, VcpuEvent, VcpuHandle, VcpuResponse};
 pub use crate::vstate::vm::Vm;
@@ -523,7 +521,6 @@ impl Vmm {
         };
         let device_states = self.mmio_device_manager.save();
 
-        let memory_state = self.vm.guest_memory().describe();
         let acpi_dev_state = self.acpi_device_manager.save();
         #[cfg(target_arch = "aarch64")]
         let pvtime_state: Option<arch::aarch64::pvtime::PVTimeState> =
@@ -531,7 +528,6 @@ impl Vmm {
 
         Ok(MicrovmState {
             vm_info: vm_info.clone(),
-            memory_state,
             kvm_state,
             vm_state,
             vcpu_states,
