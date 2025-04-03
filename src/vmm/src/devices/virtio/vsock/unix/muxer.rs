@@ -36,6 +36,7 @@ use std::io::Read;
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::os::unix::net::{UnixListener, UnixStream};
 
+use bitvec::array::BitArray;
 use log::{debug, error, info, warn};
 use vmm_sys_util::epoll::{ControlOperation, Epoll, EpollEvent, EventSet};
 
@@ -48,6 +49,7 @@ use super::{MuxerConnection, VsockUnixBackendError, defs};
 use crate::devices::virtio::vsock::metrics::METRICS;
 use crate::devices::virtio::vsock::packet::{VsockPacketRx, VsockPacketTx};
 use crate::logger::IncMetric;
+
 
 /// A unique identifier of a `MuxerConnection` object. Connections are stored in a hash map,
 /// keyed by a `ConnMapKey` object.
@@ -105,7 +107,9 @@ pub struct VsockMuxer {
     epoll: Epoll,
     /// A hash set used to keep track of used host-side (local) ports, in order to assign local
     /// ports to host-initiated connections.
-    local_port_set: HashSet<u32>,
+    /// A bit array used to keep track of used host-side (local) ports, in order to assign local
+    /// ports to host-initiated connections.
+    local_port_set: BitArray<[u8; 128]>, // 1024 bits - based off of MAX_CONNECTIONS
     /// The last used host-side port.
     local_port_last: u32,
 }
@@ -320,7 +324,7 @@ impl VsockMuxer {
             listener_map: HashMap::with_capacity(defs::MAX_CONNECTIONS + 1),
             killq: MuxerKillQ::new(),
             local_port_last: (1u32 << 30) - 1,
-            local_port_set: HashSet::with_capacity(defs::MAX_CONNECTIONS),
+            local_port_set: BitArray::ZERO,
         };
 
         // Listen on the host initiated socket, for incoming connections.
@@ -590,6 +594,22 @@ impl VsockMuxer {
         // Mybe rewrite this to limit port range and use a bitmap?
         //
 
+        const PORT_BASE: u32 = 1u32 << 30;
+        const PORT_MAX: u32 = PORT_BASE + (defs::MAX_CONNECTIONS as u32) - 1;
+        loop {
+            self.local_port_last = if self.local_port_last > PORT_MAX {
+                PORT_BASE
+            } else {
+                self.local_port_last + 1
+            };
+
+            let idx = (self.local_port_last - PORT_BASE);
+            if !self.local_port_set[idx] {
+                self.local_port_set.set(idx, true);
+                break;
+            }
+        }
+
         loop {
             self.local_port_last = (self.local_port_last + 1) & !(1 << 31) | (1 << 30);
             if self.local_port_set.insert(self.local_port_last) {
@@ -601,6 +621,12 @@ impl VsockMuxer {
 
     /// Mark a previously used host-side port as free.
     fn free_local_port(&mut self, port: u32) {
+        const PORT_BASE: u32 = 1u32 << 30;
+        let idx = (port - PORT_BASE);
+        if idx < defs::MAX_CONNECTIONS {
+            self.local_port_set.set(idx, false);
+        } 
+
         self.local_port_set.remove(&port);
     }
 
@@ -951,7 +977,7 @@ mod tests {
                 peer_port,
             };
             assert!(self.muxer.conn_map.contains_key(&key));
-            assert!(self.muxer.local_port_set.contains(&local_port));
+            assert!(self.muxer.local_port_set[(local_port - (1u32 << 30))]);
 
             // A connection request for the peer should now be available from the muxer.
             assert!(self.muxer.has_pending_rx());
@@ -1202,7 +1228,7 @@ mod tests {
             peer_port,
         };
         assert!(!ctx.muxer.conn_map.contains_key(&key));
-        assert!(!ctx.muxer.local_port_set.contains(&local_port));
+        assert!(!ctx.muxer.local_port_set[local_port - (1u32 << 30)]);
     }
 
     #[test]
