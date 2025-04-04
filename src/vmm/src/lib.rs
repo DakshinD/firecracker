@@ -134,6 +134,8 @@ use vstate::kvm::Kvm;
 use vstate::vcpu::{self, StartThreadedError, VcpuSendEventError};
 
 use crate::arch::DeviceType;
+#[cfg(target_arch = "aarch64")]
+use crate::arch::aarch64::pvtime::PVTime;
 use crate::cpu_config::templates::CpuConfiguration;
 #[cfg(target_arch = "x86_64")]
 use crate::device_manager::legacy::PortIODeviceManager;
@@ -157,7 +159,6 @@ use crate::vstate::memory::{
 use crate::vstate::vcpu::VcpuState;
 pub use crate::vstate::vcpu::{Vcpu, VcpuConfig, VcpuEvent, VcpuHandle, VcpuResponse};
 pub use crate::vstate::vm::Vm;
-
 /// Shorthand type for the EventManager flavour used by Firecracker.
 pub type EventManager = BaseEventManager<Arc<Mutex<dyn MutEventSubscriber>>>;
 
@@ -324,6 +325,8 @@ pub struct Vmm {
     #[cfg(target_arch = "x86_64")]
     pio_device_manager: PortIODeviceManager,
     acpi_device_manager: ACPIDeviceManager,
+    #[cfg(target_arch = "aarch64")]
+    pv_time: Option<PVTime>,
 }
 
 impl Vmm {
@@ -523,6 +526,9 @@ impl Vmm {
 
         let memory_state = self.guest_memory.describe();
         let acpi_dev_state = self.acpi_device_manager.save();
+        #[cfg(target_arch = "aarch64")]
+        let pvtime_state: Option<arch::aarch64::pvtime::PVTimeState> =
+            self.pv_time.as_ref().map(|pvtime| pvtime.save());
 
         Ok(MicrovmState {
             vm_info: vm_info.clone(),
@@ -532,6 +538,8 @@ impl Vmm {
             vcpu_states,
             device_states,
             acpi_dev_state,
+            #[cfg(target_arch = "aarch64")]
+            pvtime_state,
         })
     }
 
